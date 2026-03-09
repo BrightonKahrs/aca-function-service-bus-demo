@@ -14,10 +14,7 @@
   },
   "extensions": {
     "serviceBus": {
-      "prefetchCount": 100,
-      "autoCompleteMessages": true,
-      "maxConcurrentCalls": 32,
-      "maxMessageBatchSize": 1000
+      "maxConcurrentCalls": 32
     }
   }
 }
