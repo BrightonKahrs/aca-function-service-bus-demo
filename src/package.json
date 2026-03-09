@@ -1,0 +1,14 @@
+{
+  "name": "aca-function-service-bus-demo",
+  "version": "1.0.0",
+  "description": "Azure Functions on Container Apps - Service Bus trigger demo",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests configured\""
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "devDependencies": {}
+}
