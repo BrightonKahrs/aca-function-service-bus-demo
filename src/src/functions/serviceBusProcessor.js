@@ -16,6 +16,7 @@ app.serviceBusQueue('serviceBusProcessor', {
         }
 
         // Simulate processing work
+        await new Promise(resolve => setTimeout(resolve, 2000));
         context.log(`  Processing complete.`);
     }
 });

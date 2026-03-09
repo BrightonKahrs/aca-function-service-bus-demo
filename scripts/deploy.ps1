@@ -57,10 +57,16 @@ $acaEnvName = $deployOutput.acaEnvironmentName.value
 $acaEnvId = $deployOutput.acaEnvironmentId.value
 $functionAppName = $deployOutput.functionAppName.value
 $sbNamespaceName = $deployOutput.serviceBusNamespaceName.value
+$sbNamespaceFqdn = $deployOutput.serviceBusNamespaceFqdn.value
 $sbQueueName = $deployOutput.serviceBusQueueName.value
 $sbRuleName = $deployOutput.serviceBusRuleName.value
 $storageAccountName = $deployOutput.storageAccountName.value
+$storageBlobEndpoint = $deployOutput.storageBlobEndpoint.value
+$storageQueueEndpoint = $deployOutput.storageQueueEndpoint.value
 $appInsightsConnStr = $deployOutput.appInsightsConnectionString.value
+$storageBlobDataOwnerRoleId = $deployOutput.storageBlobDataOwnerRoleId.value
+$storageQueueDataContributorRoleId = $deployOutput.storageQueueDataContributorRoleId.value
+$serviceBusDataReceiverRoleId = $deployOutput.serviceBusDataReceiverRoleId.value
 
 Write-Host "  ACR:          $acrLoginServer" -ForegroundColor Gray
 Write-Host "  ACA Env:      $acaEnvName" -ForegroundColor Gray
@@ -81,20 +87,9 @@ az acr build `
     "$PSScriptRoot\.."
 
 # ──────────────────────────────────────────────
-# Step 4: Get connection strings
+# Step 4: Get ACR credentials
 # ──────────────────────────────────────────────
-Write-Host "[4/6] Retrieving connection strings..." -ForegroundColor Yellow
-
-$sbConnectionString = az servicebus namespace authorization-rule keys list `
-    --namespace-name $sbNamespaceName `
-    --resource-group $ResourceGroup `
-    --name $sbRuleName `
-    --query "primaryConnectionString" -o tsv
-
-$storageConnectionString = az storage account show-connection-string `
-    --name $storageAccountName `
-    --resource-group $ResourceGroup `
-    --query "connectionString" -o tsv
+Write-Host "[4/7] Retrieving ACR credentials..." -ForegroundColor Yellow
 
 $acrPassword = az acr credential show `
     --name $acrName `
@@ -103,13 +98,10 @@ $acrPassword = az acr credential show `
 # ──────────────────────────────────────────────
 # Step 5: Create the Container App with --kind functionapp
 # ──────────────────────────────────────────────
-# This is the CRITICAL step that differentiates Functions on ACA from regular container apps.
-# --kind functionapp tells the platform to:
-#   - Auto-configure KEDA scale rules from host.json and trigger bindings
-#   - Enable the Functions programming model
-#   - Recognize this as a Functions app in the portal
+# Uses system-assigned managed identity instead of connection strings
+# for both Storage and Service Bus access.
 # ──────────────────────────────────────────────
-Write-Host "[5/6] Creating Container App with --kind functionapp..." -ForegroundColor Yellow
+Write-Host "[5/7] Creating Container App with --kind functionapp (managed identity)..." -ForegroundColor Yellow
 Write-Host "  (This enables automatic KEDA scaling from host.json triggers)" -ForegroundColor DarkGray
 
 az containerapp create `
@@ -125,17 +117,68 @@ az containerapp create `
     --kind functionapp `
     --min-replicas 0 `
     --max-replicas 30 `
+    --system-assigned `
     --env-vars `
-        "AzureWebJobsStorage=$storageConnectionString" `
-        "ServiceBusConnection=$sbConnectionString" `
+        "AzureWebJobsStorage=$storageBlobEndpoint" `
+        "AzureWebJobsStorage__queueServiceUri=$storageQueueEndpoint" `
+        "AzureWebJobsStorage__credential=managedidentity" `
+        "ServiceBusConnection__fullyQualifiedNamespace=$sbNamespaceFqdn" `
+        "ServiceBusConnection__credential=managedidentity" `
         "APPLICATIONINSIGHTS_CONNECTION_STRING=$appInsightsConnStr" `
         "FUNCTIONS_WORKER_RUNTIME=node" `
     --output none
 
 # ──────────────────────────────────────────────
-# Step 6: Get the app URL
+# Step 6: Assign RBAC roles to the managed identity
 # ──────────────────────────────────────────────
-Write-Host "[6/6] Retrieving deployed app URL..." -ForegroundColor Yellow
+Write-Host "[6/7] Assigning RBAC roles to managed identity..." -ForegroundColor Yellow
+
+$principalId = az containerapp show `
+    --name $functionAppName `
+    --resource-group $ResourceGroup `
+    --query "identity.principalId" -o tsv
+
+$storageAccountId = az storage account show `
+    --name $storageAccountName `
+    --resource-group $ResourceGroup `
+    --query "id" -o tsv
+
+$sbNamespaceId = az servicebus namespace show `
+    --name $sbNamespaceName `
+    --resource-group $ResourceGroup `
+    --query "id" -o tsv
+
+# Storage Blob Data Owner (required for AzureWebJobsStorage)
+Write-Host "  Assigning Storage Blob Data Owner..." -ForegroundColor DarkGray
+az role assignment create `
+    --assignee-object-id $principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role $storageBlobDataOwnerRoleId `
+    --scope $storageAccountId `
+    --output none
+
+# Storage Queue Data Contributor (required for AzureWebJobsStorage queue operations)
+Write-Host "  Assigning Storage Queue Data Contributor..." -ForegroundColor DarkGray
+az role assignment create `
+    --assignee-object-id $principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role $storageQueueDataContributorRoleId `
+    --scope $storageAccountId `
+    --output none
+
+# Azure Service Bus Data Receiver (required for queue trigger)
+Write-Host "  Assigning Service Bus Data Receiver..." -ForegroundColor DarkGray
+az role assignment create `
+    --assignee-object-id $principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role $serviceBusDataReceiverRoleId `
+    --scope $sbNamespaceId `
+    --output none
+
+# ──────────────────────────────────────────────
+# Step 7: Get the app URL
+# ──────────────────────────────────────────────
+Write-Host "[7/7] Retrieving deployed app URL..." -ForegroundColor Yellow
 
 $appFqdn = az containerapp show `
     --name $functionAppName `

@@ -143,12 +143,25 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
 // ──────────────────────────────────────────────
 
 // ──────────────────────────────────────────────
+// Built-in Role Definitions
+// ──────────────────────────────────────────────
+// Storage Blob Data Owner
+var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+// Storage Queue Data Contributor
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+// Azure Service Bus Data Receiver
+var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+
+// ──────────────────────────────────────────────
 // Outputs
 // ──────────────────────────────────────────────
 output serviceBusNamespaceName string = serviceBusNamespace.name
+output serviceBusNamespaceFqdn string = '${serviceBusNamespace.name}.servicebus.windows.net'
 output serviceBusQueueName string = serviceBusQueue.name
 output serviceBusRuleName string = serviceBusSendListenRule.name
 output storageAccountName string = storageAccount.name
+output storageBlobEndpoint string = storageAccount.properties.primaryEndpoints.blob
+output storageQueueEndpoint string = storageAccount.properties.primaryEndpoints.queue
 output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output appInsightsName string = appInsights.name
@@ -158,3 +171,6 @@ output acaEnvironmentName string = acaEnvironment.name
 output acaEnvironmentId string = acaEnvironment.id
 output functionAppName string = functionAppName
 output resourceGroupName string = resourceGroup().name
+output storageBlobDataOwnerRoleId string = storageBlobDataOwnerRoleId
+output storageQueueDataContributorRoleId string = storageQueueDataContributorRoleId
+output serviceBusDataReceiverRoleId string = serviceBusDataReceiverRoleId
