@@ -101,8 +101,10 @@ $acrPassword = az acr credential show `
 # Uses system-assigned managed identity instead of connection strings
 # for both Storage and Service Bus access.
 # ──────────────────────────────────────────────
-Write-Host "[5/7] Creating Container App with --kind functionapp (managed identity)..." -ForegroundColor Yellow
-Write-Host "  (Using explicit KEDA scale rule: messageCount=10, decoupled from maxConcurrentCalls=1)" -ForegroundColor DarkGray
+Write-Host "[5/7] Creating Container App (explicit KEDA scaling, no --kind functionapp)..." -ForegroundColor Yellow
+Write-Host "  (maxConcurrentCalls=1 in host.json, KEDA messageCount=10 for scaling)" -ForegroundColor DarkGray
+Write-Host "  NOTE: --kind functionapp blocks manual scale rules, so we deploy as a" -ForegroundColor DarkGray
+Write-Host "  regular container app with explicit KEDA config to decouple the two." -ForegroundColor DarkGray
 
 # Get Service Bus connection string for KEDA scaler authentication
 $sbConnectionString = az servicebus namespace authorization-rule keys list `
@@ -121,7 +123,6 @@ az containerapp create `
     --registry-password $acrPassword `
     --ingress external `
     --target-port 80 `
-    --kind functionapp `
     --min-replicas 0 `
     --max-replicas 30 `
     --system-assigned `
