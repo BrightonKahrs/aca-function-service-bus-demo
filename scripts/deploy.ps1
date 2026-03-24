@@ -102,7 +102,14 @@ $acrPassword = az acr credential show `
 # for both Storage and Service Bus access.
 # ──────────────────────────────────────────────
 Write-Host "[5/7] Creating Container App with --kind functionapp (managed identity)..." -ForegroundColor Yellow
-Write-Host "  (This enables automatic KEDA scaling from host.json triggers)" -ForegroundColor DarkGray
+Write-Host "  (Using explicit KEDA scale rule: messageCount=10, decoupled from maxConcurrentCalls=1)" -ForegroundColor DarkGray
+
+# Get Service Bus connection string for KEDA scaler authentication
+$sbConnectionString = az servicebus namespace authorization-rule keys list `
+    --resource-group $ResourceGroup `
+    --namespace-name $sbNamespaceName `
+    --name $sbRuleName `
+    --query "primaryConnectionString" -o tsv
 
 az containerapp create `
     --name $functionAppName `
@@ -118,6 +125,10 @@ az containerapp create `
     --min-replicas 0 `
     --max-replicas 30 `
     --system-assigned `
+    --scale-rule-name service-bus-queue-scaler `
+    --scale-rule-type azure-servicebus `
+    --scale-rule-metadata "queueName=$sbQueueName" "namespace=$sbNamespaceName" "messageCount=10" `
+    --scale-rule-auth "connection=service-bus-connection-string" `
     --env-vars `
         "AzureWebJobsStorage=$storageBlobEndpoint" `
         "AzureWebJobsStorage__queueServiceUri=$storageQueueEndpoint" `
@@ -126,6 +137,7 @@ az containerapp create `
         "ServiceBusConnection__credential=managedidentity" `
         "APPLICATIONINSIGHTS_CONNECTION_STRING=$appInsightsConnStr" `
         "FUNCTIONS_WORKER_RUNTIME=node" `
+    --secrets "service-bus-connection-string=$sbConnectionString" `
     --output none
 
 # ──────────────────────────────────────────────
