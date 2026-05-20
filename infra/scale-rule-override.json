@@ -1,0 +1,30 @@
+{
+  "properties": {
+    "template": {
+      "scale": {
+        "minReplicas": 0,
+        "maxReplicas": 20,
+        "allowScalingRuleOverride": true,
+        "rules": [
+          {
+            "name": "service-bus-queue-scaler",
+            "custom": {
+              "type": "azure-servicebus",
+              "metadata": {
+                "queueName": "__QUEUE_NAME__",
+                "namespace": "__SB_NAMESPACE__",
+                "messageCount": "50"
+              },
+              "auth": [
+                {
+                  "secretRef": "service-bus-connection-string",
+                  "triggerParameter": "connection"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

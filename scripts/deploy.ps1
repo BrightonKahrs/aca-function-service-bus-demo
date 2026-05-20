@@ -141,42 +141,17 @@ az containerapp create `
 # Step 5b: Apply custom KEDA scale rule override via REST API
 # Per https://learn.microsoft.com/azure/container-apps/functions-scale-rule-override
 # kind=functionapp requires `allowScalingRuleOverride=true` to use custom rules.
+# Patch body lives in infra/scale-rule-override.json (placeholders substituted).
 # ──────────────────────────────────────────────
 Write-Host "[5b/7] Applying custom KEDA scale rule (messageCount=50) via PATCH..." -ForegroundColor Yellow
 
 $subId = az account show --query id -o tsv
 $patchUri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.App/containerApps/$functionAppName" + "?api-version=2026-03-02-preview"
 
-$patchBody = @{
-    properties = @{
-        template = @{
-            scale = @{
-                minReplicas = 0
-                maxReplicas = 20
-                allowScalingRuleOverride = $true
-                rules = @(
-                    @{
-                        name = "service-bus-queue-scaler"
-                        custom = @{
-                            type = "azure-servicebus"
-                            metadata = @{
-                                queueName    = $sbQueueName
-                                namespace    = $sbNamespaceName
-                                messageCount = "50"
-                            }
-                            auth = @(
-                                @{
-                                    secretRef        = "service-bus-connection-string"
-                                    triggerParameter = "connection"
-                                }
-                            )
-                        }
-                    }
-                )
-            }
-        }
-    }
-} | ConvertTo-Json -Depth 20 -Compress
+$patchTemplate = Get-Content "$PSScriptRoot\..\infra\scale-rule-override.json" -Raw
+$patchBody = $patchTemplate `
+    -replace '__QUEUE_NAME__', $sbQueueName `
+    -replace '__SB_NAMESPACE__', $sbNamespaceName
 
 $patchFile = New-TemporaryFile
 Set-Content -Path $patchFile -Value $patchBody -Encoding utf8

@@ -48,6 +48,9 @@ resource serviceBusQueue 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-prev
 }
 
 // Auth rule to get connection string
+// Needs Manage right so the KEDA azure-servicebus scaler can call the
+// management API to read queue length (otherwise it gets 401
+// "Manage,EntityRead claims required").
 resource serviceBusSendListenRule 'Microsoft.ServiceBus/namespaces/AuthorizationRules@2022-10-01-preview' = {
   parent: serviceBusNamespace
   name: 'FunctionAppRule'
@@ -55,6 +58,7 @@ resource serviceBusSendListenRule 'Microsoft.ServiceBus/namespaces/Authorization
     rights: [
       'Listen'
       'Send'
+      'Manage'
     ]
   }
 }
