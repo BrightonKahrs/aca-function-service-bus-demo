@@ -101,22 +101,30 @@ $acrPassword = az acr credential show `
 # Uses system-assigned managed identity instead of connection strings
 # for both Storage and Service Bus access.
 # ──────────────────────────────────────────────
-Write-Host "[5/7] Creating Container App with --kind functionapp (managed identity)..." -ForegroundColor Yellow
-Write-Host "  (This enables automatic KEDA scaling from host.json triggers)" -ForegroundColor DarkGray
+Write-Host "[5/7] Creating Container App with --kind functionapp..." -ForegroundColor Yellow
+Write-Host "  Custom KEDA scale rule (messageCount=50) applied via PATCH using" -ForegroundColor DarkGray
+Write-Host "  allowScalingRuleOverride=true (api-version 2026-03-02-preview)." -ForegroundColor DarkGray
+
+# Get Service Bus connection string for KEDA scaler authentication
+$sbConnectionString = az servicebus namespace authorization-rule keys list `
+    --resource-group $ResourceGroup `
+    --namespace-name $sbNamespaceName `
+    --name $sbRuleName `
+    --query "primaryConnectionString" -o tsv
 
 az containerapp create `
     --name $functionAppName `
     --resource-group $ResourceGroup `
     --environment $acaEnvName `
     --image $imageTag `
+    --kind functionapp `
     --registry-server $acrLoginServer `
     --registry-username $acrName `
     --registry-password $acrPassword `
     --ingress external `
     --target-port 80 `
-    --kind functionapp `
     --min-replicas 0 `
-    --max-replicas 30 `
+    --max-replicas 20 `
     --system-assigned `
     --env-vars `
         "AzureWebJobsStorage=$storageBlobEndpoint" `
@@ -126,7 +134,54 @@ az containerapp create `
         "ServiceBusConnection__credential=managedidentity" `
         "APPLICATIONINSIGHTS_CONNECTION_STRING=$appInsightsConnStr" `
         "FUNCTIONS_WORKER_RUNTIME=node" `
+    --secrets "service-bus-connection-string=$sbConnectionString" `
     --output none
+
+# ──────────────────────────────────────────────
+# Step 5b: Apply custom KEDA scale rule override via REST API
+# Per https://learn.microsoft.com/azure/container-apps/functions-scale-rule-override
+# kind=functionapp requires `allowScalingRuleOverride=true` to use custom rules.
+# ──────────────────────────────────────────────
+Write-Host "[5b/7] Applying custom KEDA scale rule (messageCount=50) via PATCH..." -ForegroundColor Yellow
+
+$subId = az account show --query id -o tsv
+$patchUri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.App/containerApps/$functionAppName" + "?api-version=2026-03-02-preview"
+
+$patchBody = @{
+    properties = @{
+        template = @{
+            scale = @{
+                minReplicas = 0
+                maxReplicas = 20
+                allowScalingRuleOverride = $true
+                rules = @(
+                    @{
+                        name = "service-bus-queue-scaler"
+                        custom = @{
+                            type = "azure-servicebus"
+                            metadata = @{
+                                queueName    = $sbQueueName
+                                namespace    = $sbNamespaceName
+                                messageCount = "50"
+                            }
+                            auth = @(
+                                @{
+                                    secretRef        = "service-bus-connection-string"
+                                    triggerParameter = "connection"
+                                }
+                            )
+                        }
+                    }
+                )
+            }
+        }
+    }
+} | ConvertTo-Json -Depth 20 -Compress
+
+$patchFile = New-TemporaryFile
+Set-Content -Path $patchFile -Value $patchBody -Encoding utf8
+az rest --method PATCH --uri $patchUri --headers "Content-Type=application/json" --body "@$patchFile" --output none
+Remove-Item $patchFile -Force
 
 # ──────────────────────────────────────────────
 # Step 6: Assign RBAC roles to the managed identity
