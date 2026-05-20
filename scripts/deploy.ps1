@@ -101,10 +101,9 @@ $acrPassword = az acr credential show `
 # Uses system-assigned managed identity instead of connection strings
 # for both Storage and Service Bus access.
 # ──────────────────────────────────────────────
-Write-Host "[5/7] Creating Container App (explicit KEDA scaling, no --kind functionapp)..." -ForegroundColor Yellow
-Write-Host "  (maxConcurrentCalls=1 in host.json, KEDA messageCount=10 for scaling)" -ForegroundColor DarkGray
-Write-Host "  NOTE: --kind functionapp blocks manual scale rules, so we deploy as a" -ForegroundColor DarkGray
-Write-Host "  regular container app with explicit KEDA config to decouple the two." -ForegroundColor DarkGray
+Write-Host "[5/7] Creating Container App with --kind functionapp..." -ForegroundColor Yellow
+Write-Host "  Custom KEDA scale rule (messageCount=50) applied via PATCH using" -ForegroundColor DarkGray
+Write-Host "  allowScalingRuleOverride=true (api-version 2026-03-02-preview)." -ForegroundColor DarkGray
 
 # Get Service Bus connection string for KEDA scaler authentication
 $sbConnectionString = az servicebus namespace authorization-rule keys list `
@@ -118,18 +117,15 @@ az containerapp create `
     --resource-group $ResourceGroup `
     --environment $acaEnvName `
     --image $imageTag `
+    --kind functionapp `
     --registry-server $acrLoginServer `
     --registry-username $acrName `
     --registry-password $acrPassword `
     --ingress external `
     --target-port 80 `
     --min-replicas 0 `
-    --max-replicas 30 `
+    --max-replicas 20 `
     --system-assigned `
-    --scale-rule-name service-bus-queue-scaler `
-    --scale-rule-type azure-servicebus `
-    --scale-rule-metadata "queueName=$sbQueueName" "namespace=$sbNamespaceName" "messageCount=10" `
-    --scale-rule-auth "connection=service-bus-connection-string" `
     --env-vars `
         "AzureWebJobsStorage=$storageBlobEndpoint" `
         "AzureWebJobsStorage__queueServiceUri=$storageQueueEndpoint" `
@@ -140,6 +136,52 @@ az containerapp create `
         "FUNCTIONS_WORKER_RUNTIME=node" `
     --secrets "service-bus-connection-string=$sbConnectionString" `
     --output none
+
+# ──────────────────────────────────────────────
+# Step 5b: Apply custom KEDA scale rule override via REST API
+# Per https://learn.microsoft.com/azure/container-apps/functions-scale-rule-override
+# kind=functionapp requires `allowScalingRuleOverride=true` to use custom rules.
+# ──────────────────────────────────────────────
+Write-Host "[5b/7] Applying custom KEDA scale rule (messageCount=50) via PATCH..." -ForegroundColor Yellow
+
+$subId = az account show --query id -o tsv
+$patchUri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.App/containerApps/$functionAppName" + "?api-version=2026-03-02-preview"
+
+$patchBody = @{
+    properties = @{
+        template = @{
+            scale = @{
+                minReplicas = 0
+                maxReplicas = 20
+                allowScalingRuleOverride = $true
+                rules = @(
+                    @{
+                        name = "service-bus-queue-scaler"
+                        custom = @{
+                            type = "azure-servicebus"
+                            metadata = @{
+                                queueName    = $sbQueueName
+                                namespace    = $sbNamespaceName
+                                messageCount = "50"
+                            }
+                            auth = @(
+                                @{
+                                    secretRef        = "service-bus-connection-string"
+                                    triggerParameter = "connection"
+                                }
+                            )
+                        }
+                    }
+                )
+            }
+        }
+    }
+} | ConvertTo-Json -Depth 20 -Compress
+
+$patchFile = New-TemporaryFile
+Set-Content -Path $patchFile -Value $patchBody -Encoding utf8
+az rest --method PATCH --uri $patchUri --headers "Content-Type=application/json" --body "@$patchFile" --output none
+Remove-Item $patchFile -Force
 
 # ──────────────────────────────────────────────
 # Step 6: Assign RBAC roles to the managed identity
